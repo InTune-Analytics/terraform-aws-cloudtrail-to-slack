@@ -82,11 +82,11 @@ def webhook_post_message(message: dict, hook_url: str) -> int:
 #
 # INTUNE PATCH (vendored fork, baseline upstream tag 4.5.0): the upstream formatter
 # dumped requestParameters + responseElements + additionalEventData as three raw
-# json.dumps context blocks — an unreadable wall of text for Lambda deploy /
-# scheduler events whose payloads carry the entire function/schedule config. This
-# rewrite leads with a ClickOps-style two-column summary (IAM Action / Principal /
-# Account / Region) and keeps the full event as a single truncated code block at the
-# bottom, so the message is scannable without reading the JSON.
+# json.dumps context blocks — an unreadable wall of text. This rewrite leads with a
+# compact summary (Principal / Action / Resource / Account-Region) and shows ONLY the
+# requestParameters (the "what changed" detail) as a small code block. The full event
+# is intentionally omitted from Slack — it lives in CloudTrail; the S3 path is in the
+# footer for forensics. This keeps each alert scannable in one glance.
 def event_to_slack_message(event:  dict, source_file :str , account_id_from_event: str ) ->  dict[str, Any]:
     event_name    = event["eventName"]
     event_source  = event.get("eventSource", "")
@@ -98,8 +98,18 @@ def event_to_slack_message(event:  dict, source_file :str , account_id_from_even
 
     identity = event.get("userIdentity", {})
     # Prefer a human-readable principal: IAM userName, else the full ARN.
-    principal  = identity.get("userName") or identity.get("arn", "Unknown Identity")
-    iam_action = f"{event_name}:{event_source}" if event_source else event_name
+    principal = identity.get("userName") or identity.get("arn", "Unknown Identity")
+    action    = f"{event_name}:{event_source}" if event_source else event_name
+
+    # Best-effort "what was touched": first resource ARN, else a name-ish request param.
+    resource  = ""
+    resources = event.get("resources") or []
+    if isinstance(resources, list) and resources and isinstance(resources[0], dict) and resources[0].get("ARN"):
+        resource = resources[0]["ARN"]
+    else:
+        rp = event.get("requestParameters") or {}
+        if isinstance(rp, dict):
+            resource = rp.get("name") or rp.get("functionName") or rp.get("bucketName") or rp.get("groupName") or ""
 
     blocks = []
 
@@ -108,39 +118,38 @@ def event_to_slack_message(event:  dict, source_file :str , account_id_from_even
         header = ":warning: *ClickOps Alert* (action failed) :warning:"
     blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": header}})
 
-    # Slack renders a section's `fields` in two columns — the ClickOps summary.
-    blocks.append({
-        "type": "section",
-        "fields": [
-            {"type": "mrkdwn", "text": f"*IAM Action*\n{iam_action}"},
-            {"type": "mrkdwn", "text": f"*Principal*\n{principal}"},
-            {"type": "mrkdwn", "text": f"*Account Id*\n{account_id_from_event}"},
-            {"type": "mrkdwn", "text": f"*Region*\n{region}"},
-        ],
-    })
+    summary = (
+        f"*Principal:* {principal}\n"
+        f"*Action:* {action}\n"
+        f"*Account / Region:* {account_id_from_event} / {region}"
+    )
+    if resource:
+        summary += f"\n*Resource:* `{resource}`"
+    blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": summary}})
 
     if error_code is not None:
-        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Failed due to* ```{error_code}```"}})
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Failed due to* `{error_code}`"}})
 
     if error_message is not None:
-        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Error message:* ```{error_message}```"}})
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Error:* {error_message}"}})
 
     if event_name == "ConsoleLogin" and event.get("additionalEventData", {}).get("MFAUsed") != "Yes":
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": ":warning: *Login without MFA!* :warning:"}})
 
-    # Full event as ONE code block. A Slack section text caps at 3000 chars, so
-    # truncate the pretty-printed JSON to stay safely under the limit.
-    event_json = json.dumps(event, indent=2, default=str)
-    if len(event_json) > 2800:
-        event_json = event_json[:2800] + "\n... (truncated)"
-    blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Event*\n```{event_json}```"}})
+    # Only the request parameters — the "what changed" detail. CloudTrail redacts
+    # secret values (e.g. SecureString → HIDDEN_DUE_TO_SECURITY_REASONS) upstream.
+    request_parameters = event.get("requestParameters")
+    if request_parameters:
+        rp_json = json.dumps(request_parameters, indent=2, default=str)
+        if len(rp_json) > 1500:
+            rp_json = rp_json[:1500] + "\n... (truncated)"
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Request parameters*\n```{rp_json}```"}})
 
     blocks.append({
         "type": "context",
         "elements": [
-            {"type": "mrkdwn", "text": f"Time: {event_time} UTC"},
-            {"type": "mrkdwn", "text": f"Id: {event_id}"},
-            {"type": "mrkdwn", "text": f"S3: {source_file}"},
+            {"type": "mrkdwn", "text": f"{event_name} · {event_time} UTC · `{event_id}`"},
+            {"type": "mrkdwn", "text": f"Full event in CloudTrail: {source_file}"},
         ],
     })
 

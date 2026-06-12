@@ -80,13 +80,13 @@ def webhook_post_message(message: dict, hook_url: str) -> int:
 
 # Format message
 #
-# INTUNE PATCH (vendored fork, baseline upstream tag 4.5.0): the upstream formatter
-# dumped requestParameters + responseElements + additionalEventData as three raw
-# json.dumps context blocks — an unreadable wall of text. This rewrite leads with a
-# compact summary (Principal / Action / Resource / Account-Region) and shows ONLY the
-# requestParameters (the "what changed" detail) as a small code block. The full event
-# is intentionally omitted from Slack — it lives in CloudTrail; the S3 path is in the
-# footer for forensics. This keeps each alert scannable in one glance.
+# INTUNE PATCH (vendored fork, baseline upstream tag 4.5.0): replaces the upstream
+# three-raw-json.dumps formatter with a ClickOps-style layout — header + subtitle, a
+# TWO-COLUMN summary (Account Id | Region, IAM Action | Principal) via Slack `fields`,
+# and ONLY the requestParameters (the "what changed" detail) as a small code block.
+# The full event is omitted (it lives in CloudTrail; S3 path in the footer), keeping
+# each alert scannable. Posted via a Slack bot token so it carries its own app
+# identity, same as the original ClickOps.
 def event_to_slack_message(event:  dict, source_file :str , account_id_from_event: str ) ->  dict[str, Any]:
     event_name    = event["eventName"]
     event_source  = event.get("eventSource", "")
@@ -118,14 +118,22 @@ def event_to_slack_message(event:  dict, source_file :str , account_id_from_even
         header = ":warning: *ClickOps Alert* (action failed) :warning:"
     blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": header}})
 
-    summary = (
-        f"*Principal:* {principal}\n"
-        f"*Action:* {action}\n"
-        f"*Account / Region:* {account_id_from_event} / {region}"
-    )
+    blocks.append({"type": "section", "text": {"type": "mrkdwn",
+        "text": "Someone is practicing ClickOps in your AWS Account!"}})
+
+    # Two-column summary — Slack lays `fields` out two-per-row, like ClickOps.
+    blocks.append({
+        "type": "section",
+        "fields": [
+            {"type": "mrkdwn", "text": f"*Account Id*\n{account_id_from_event}"},
+            {"type": "mrkdwn", "text": f"*Region*\n{region}"},
+            {"type": "mrkdwn", "text": f"*IAM Action*\n{action}"},
+            {"type": "mrkdwn", "text": f"*Principal*\n{principal}"},
+        ],
+    })
+
     if resource:
-        summary += f"\n*Resource:* `{resource}`"
-    blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": summary}})
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Resource*\n`{resource}`"}})
 
     if error_code is not None:
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Failed due to* `{error_code}`"}})

@@ -1,0 +1,5 @@
+# CODEOWNERS — team-based ownership (ITP-492).
+# The owning team is the team holding admin access to this repo. Using teams
+# (not a list of individuals) keeps ownership low-maintenance as people join
+# and leave. Ref: https://intuneanalytics2.atlassian.net/browse/ITP-492
+* @InTune-Analytics/leadership-tech @InTune-Analytics/platform

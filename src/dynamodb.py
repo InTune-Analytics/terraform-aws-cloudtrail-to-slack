@@ -22,8 +22,18 @@ def hash_user_identity_and_event_name(event: dict,) -> str | None:
 
     # If more than 3 elements are "N/A", return None, cause we can't be sure that we will get a unique hash.
     if na_count >= 3: # noqa: PLR2004
-        logger.info({"Not enough information to hash": {"event": event["userIdentity"]}})
-        return None
+        # AWS service principals (API Gateway, Secrets Manager, ... invoking on our behalf) carry only
+        # type + invokedBy, so the identity alone is not unique. Key them on the service + the resource it acted
+        # on + the error, so repeats of one failure thread together and two different resources stay apart.
+        invoked_by = user_identity.get("invokedBy")
+        resources = event.get("resources") or []
+        resource = (resources[0] or {}).get("ARN") if resources else None
+        if not invoked_by or not resource:
+            logger.info({"Not enough information to hash": {"event": event["userIdentity"]}})
+            return None
+        combined = "service" + invoked_by + resource + event["eventName"] + event.get("errorCode", "")
+        logger.info({"Hashing service principal, resource and event name"})
+        return hashlib.sha256(combined.encode()).hexdigest()
     logger.info({"Hashing user identity and event name"})
     combined = type + principalId + arn + accountId + event["eventName"]
     # Concatenate the user_identity string and event_name

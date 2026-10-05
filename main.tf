@@ -49,6 +49,7 @@ module "lambda" {
       IGNORE_RULES                    = var.ignore_rules
       EVENTS_TO_TRACK                 = var.events_to_track
       LOG_LEVEL                       = var.log_level
+      FAILED_ACTION_MENTION           = var.failed_action_mention
       RULE_EVALUATION_ERRORS_TO_SLACK = var.rule_evaluation_errors_to_slack
 
       DYNAMODB_TIME_TO_LIVE = var.dynamodb_time_to_live

@@ -16,6 +16,7 @@
 # under the License.
 import gzip
 import json
+import os
 import urllib
 from typing import Any, Dict, List, NamedTuple
 
@@ -241,6 +242,19 @@ def push_total_ignored_access_denied_events_cloudwatch_metric() -> None:
         logger.exception({"Failed to push CloudWatch metrics": {"error": e}})
 
 
+def with_failed_action_mention(message: dict, event: Dict[str, Any]) -> dict:
+    """Prepend FAILED_ACTION_MENTION (e.g. <@U123>) to the top-level message of a failed (errorCode) event.
+
+    Only used for the first message of an event; thread replies are posted without it, so a failure that
+    repeats every few minutes notifies once, not on every repeat.
+    """
+    mention = os.environ.get("FAILED_ACTION_MENTION", "").strip()
+    if not mention or not event.get("errorCode"):
+        return message
+    mention_block = {"type": "section", "text": {"type": "mrkdwn", "text": mention}}
+    return {**message, "blocks": [mention_block, *message.get("blocks", [])]}
+
+
 def handle_event(
     event: Dict[str, Any],
     source_file_object_key: str,
@@ -288,7 +302,7 @@ def handle_event(
 
     if isinstance(slack_config, SlackWebhookConfig):
         return post_message(
-            message=message,
+            message=with_failed_action_mention(message, event),
             account_id=account_id,
             slack_config=slack_config,
         )
@@ -311,7 +325,9 @@ def handle_event(
         else:
             # If we don't have a thread_ts, we need to post the message to the channel
             logger.info("Posting message to channel")
-            slack_response = post_message(message=message, account_id=account_id, slack_config=slack_config)
+            slack_response = post_message(
+                message=with_failed_action_mention(message, event), account_id=account_id, slack_config=slack_config,
+            )
             if slack_response is not None:
                 logger.info("Saving thread_ts to DynamoDB")
                 thread_ts = slack_response.get("ts")

@@ -175,6 +175,12 @@ variable "rules_separator" {
   type        = string
 }
 
+variable "failed_action_mention" {
+  description = "Slack mention (e.g. <@U123ABC> or <!subteam^S123>) prepended to the first message of a failed (errorCode) event. Thread replies are not mentioned. Empty = no mention."
+  default     = ""
+  type        = string
+}
+
 variable "log_level" {
   description = "Log level for lambda function"
   default     = "INFO"
